@@ -11,6 +11,7 @@
 # under the License.
 
 import argparse
+import fnmatch
 import sys
 import time
 
@@ -36,16 +37,18 @@ client = SoftLayer.create_client_from_env()
 vs = SoftLayer.VSManager(client)
 ssh = SoftLayer.SshKeyManager(client)
 
-instances = [i for i in vs.list_instances()
-             if i['fullyQualifiedDomainName'] in hosts]
+instances = []
 
-if len(instances) != len(hosts):
-    diff = set(hosts) - set([i['fullyQualifiedDomainName'] for i in instances])
-    print("Could not find hosts on SL:", ", ".join(diff))
-    sys.exit(1)
+for i in vs.list_instances():
+    for pattern in hosts:
+        if fnmatch.fnmatchcase(i['fullyQualifiedDomainName'], pattern):
+            instances.append(i)
+            break
 
 if not opts.yes:
-    prompt = raw_input("Start Reload of %s [y/N]: " % ", ".join(hosts))
+    names = "\n".join(" - %s" % i['fullyQualifiedDomainName']
+                      for i in instances)
+    prompt = raw_input("Going to reload:\n%s\nStart [y/N]: " % names)
 
     if prompt.lower() not in ('y', 'yes'):
         sys.exit(0)
@@ -71,7 +74,6 @@ ssh_keys = [key['id'] for key in ssh.list_keys()]
 
 for instance in instances:
     fqdn = instance['fullyQualifiedDomainName']
-
     try:
         vs.reload_instance(instance['id'], ssh_keys=ssh_keys)
     except SoftLayer.exceptions.SoftLayerAPIError as e:
