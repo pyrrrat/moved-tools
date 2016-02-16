@@ -36,18 +36,19 @@ client = SoftLayer.create_client_from_env()
 
 vs = SoftLayer.VSManager(client)
 ssh = SoftLayer.SshKeyManager(client)
+hardware = SoftLayer.HardwareManager(client)
 
 instances = []
 
-for i in vs.list_instances():
+for i in vs.list_instances() + hardware.list_hardware():
     for pattern in hosts:
         if fnmatch.fnmatchcase(i['fullyQualifiedDomainName'], pattern):
             instances.append(i)
             break
 
 if not opts.yes:
-    names = "\n".join(" - %s" % i['fullyQualifiedDomainName']
-                      for i in instances)
+    names = [" - %s" % i['fullyQualifiedDomainName'] for i in instances]
+    names = "\n".join(sorted(names))
     prompt = raw_input("Going to reload:\n%s\nStart [y/N]: " % names)
 
     if prompt.lower() not in ('y', 'yes'):
@@ -75,18 +76,25 @@ ssh_keys = [key['id'] for key in ssh.list_keys()]
 for instance in instances:
     fqdn = instance['fullyQualifiedDomainName']
     try:
-        vs.reload_instance(instance['id'], ssh_keys=ssh_keys)
+        if instance.get('hardwareStatusId'):
+            hardware.reload(instance['id'], ssh_keys=ssh_keys)
+        else:
+            vs.reload_instance(instance['id'], ssh_keys=ssh_keys)
     except SoftLayer.exceptions.SoftLayerAPIError as e:
         print("Failed to reload %s due to %s" % (fqdn, e))
     else:
         print("Reloaded %s" % fqdn)
 
 # wait for them to reload
-while True:
-    instances = [i.get('activeTransaction') for i in vs.list_instances()
-                 if i['fullyQualifiedDomainName'] in hosts]
+instance_names = [i['fullyQualifiedDomainName'] for i in instances]
 
-    if not any(instances):
+while True:
+    all_waiting = vs.list_instances() + hardware.list_hardware()
+
+    waiting = [i.get('activeTransaction') for i in all_waiting
+               if i['fullyQualifiedDomainName'] in instance_names]
+
+    if not any(waiting):
         break
 
     sys.stdout.write(".")
